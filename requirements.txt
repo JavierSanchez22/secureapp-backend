@@ -1,0 +1,25 @@
+# ── Web Framework ─────────────────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# ── Base de datos ──────────────────────────────────────────────────────────────
+sqlalchemy==2.0.36
+
+# ── Seguridad de contraseñas (Argon2id) ───────────────────────────────────────
+argon2-cffi==23.1.0
+
+# ── Cifrado simétrico AES-256-GCM (datos sensibles) ──────────────────────────
+cryptography==44.0.0
+
+# ── TOTP (Time-based One-Time Password) ───────────────────────────────────────
+pyotp==2.9.0
+qrcode[pil]==8.0
+
+# ── JWT (JSON Web Tokens) ─────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+
+# ── Reconocimiento facial ──────────────────────────────────────────────────────
+face_recognition==1.3.0
+numpy==1.26.4
+Pillow==11.0.0

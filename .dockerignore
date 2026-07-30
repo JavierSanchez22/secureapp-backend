@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.sqlite3
+aes_master.key
+.env
+.env.local
+*.log
