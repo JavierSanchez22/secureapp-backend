@@ -2,7 +2,6 @@
 FROM python:3.12-slim
 
 # ── Dependencias del sistema para compilar dlib ───────────────────────────────
-# dlib usa C++ y necesita estas herramientas de compilación
 RUN apt-get update && apt-get install -y \
     cmake \
     build-essential \
@@ -15,19 +14,19 @@ RUN apt-get update && apt-get install -y \
 # ── Directorio de trabajo ─────────────────────────────────────────────────────
 WORKDIR /app
 
-# ── Instalar dependencias Python ──────────────────────────────────────────────
-# Primero cmake y dlib por separado (tardan más — cacheo de capas de Docker)
+# ── Instalar dependencias Python (en capas separadas para cache) ──────────────
 COPY requirements.txt .
-RUN pip install --upgrade pip
-RUN pip install cmake
-RUN pip install dlib
-RUN pip install -r requirements.txt
+RUN pip install --upgrade pip --quiet
+RUN pip install cmake --quiet
+RUN pip install dlib --quiet
+RUN pip install -r requirements.txt --quiet
 
 # ── Copiar código fuente ──────────────────────────────────────────────────────
 COPY . .
 
-# ── Puerto expuesto (Railway asigna $PORT dinámicamente) ─────────────────────
+# ── Puerto por defecto ────────────────────────────────────────────────────────
 EXPOSE 8000
 
-# ── Comando de inicio ─────────────────────────────────────────────────────────
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# ── Inicio: Railway asigna $PORT dinámicamente ────────────────────────────────
+# Usamos sh -c para que $PORT se expanda correctamente
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

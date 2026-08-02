@@ -14,9 +14,12 @@ El encoding facial se almacena cifrado con AES-256-GCM en la base de datos.
 """
 
 import io
-import numpy as np
-import face_recognition
 from PIL import Image
+
+# ── Imports lazy de face_recognition y numpy ──────────────────────────────────
+# NO importamos al nivel de módulo porque face_recognition carga los modelos
+# de dlib al importar, lo que tarda 2-3 minutos y hace fallar el healthcheck
+# de Railway. En su lugar, importamos solo cuando se necesitan.
 
 
 # Umbral de similitud facial.
@@ -39,6 +42,10 @@ def encode_face_from_bytes(image_bytes: bytes) -> list[float] | None:
         list[float] | None: Lista de 128 floats si se detectó una cara,
                             None si no se encontró ninguna cara en la imagen.
     """
+    # Importar aquí (lazy) para no bloquear el arranque del servidor
+    import numpy as np  # noqa: PLC0415
+    import face_recognition  # noqa: PLC0415
+
     # Convertir bytes a array numpy RGB (face_recognition lo necesita en RGB)
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_array = np.array(img)
@@ -71,6 +78,10 @@ def verify_face(
             - float: Distancia euclidiana (0.0 = idéntico, 1.0 = muy diferente).
                      Valores < FACE_TOLERANCE (0.55) son considerados coincidencias.
     """
+    # Importar aquí (lazy)
+    import numpy as np  # noqa: PLC0415
+    import face_recognition  # noqa: PLC0415
+
     new_encoding = encode_face_from_bytes(new_image_bytes)
 
     if new_encoding is None:
@@ -106,6 +117,7 @@ def encoding_to_bytes(encoding: list[float]) -> bytes:
     Returns:
         bytes: Encoding serializado en formato numpy binario.
     """
+    import numpy as np  # noqa: PLC0415
     buf = io.BytesIO()
     np.save(buf, np.array(encoding, dtype=np.float64))
     buf.seek(0)
@@ -122,6 +134,7 @@ def bytes_to_encoding(data: bytes) -> list[float]:
     Returns:
         list[float]: Lista de 128 floats del encoding facial.
     """
+    import numpy as np  # noqa: PLC0415
     buf = io.BytesIO(data)
     arr = np.load(buf)
     return arr.tolist()
