@@ -238,8 +238,12 @@ def register_face(body: FaceRegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
     # Decodificar base64 → bytes de imagen
+    # Limpiar prefijo data URL si el cliente lo incluyó (ej: "data:image/jpeg;base64,...")
     try:
-        image_bytes = base64.b64decode(body.photo_base64)
+        photo_b64 = body.photo_base64
+        if "," in photo_b64:
+            photo_b64 = photo_b64.split(",", 1)[1]
+        image_bytes = base64.b64decode(photo_b64)
     except Exception:
         raise HTTPException(status_code=400, detail="Imagen base64 inválida.")
 
@@ -391,9 +395,12 @@ def auth_facial(body: FaceAuthRequest, db: Session = Depends(get_db)):
     ):
         raise HTTPException(status_code=401, detail="Sesión MFA inválida o expirada. Reinicia el login.")
 
-    # Decodificar base64 → bytes de imagen
+    # Decodificar base64 → bytes de imagen (limpiando prefijo data URL si existe)
     try:
-        image_bytes = base64.b64decode(body.photo_base64)
+        photo_b64 = body.photo_base64
+        if "," in photo_b64:
+            photo_b64 = photo_b64.split(",", 1)[1]
+        image_bytes = base64.b64decode(photo_b64)
     except Exception:
         raise HTTPException(status_code=400, detail="Imagen base64 inválida.")
 
