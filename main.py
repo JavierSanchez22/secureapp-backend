@@ -30,9 +30,10 @@ SEGURIDAD EN TRÁNSITO
 """
 
 import io
+import base64
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr
@@ -102,6 +103,19 @@ class TOTPLoginRequest(BaseModel):
     email: str
     code: str
     session_token: str
+
+
+class FaceRegisterRequest(BaseModel):
+    """Registro facial: foto enviada como base64 (evita error FormData en RN)."""
+    email: str
+    photo_base64: str
+
+
+class FaceAuthRequest(BaseModel):
+    """Verificación facial: foto + session token como base64."""
+    email: str
+    session_token: str
+    photo_base64: str
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -213,21 +227,21 @@ def register_totp_verify(body: TOTPVerifyRequest, db: Session = Depends(get_db))
 # ═════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/register/face")
-async def register_face(
-    email: str = Form(...),
-    photo: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
+def register_face(body: FaceRegisterRequest, db: Session = Depends(get_db)):
     """
     Registra el encoding facial del usuario.
-    Recibe una foto (multipart/form-data), extrae el encoding,
+    Recibe la foto como base64 en JSON, extrae el encoding,
     lo cifra con AES-256-GCM y lo guarda en la DB.
     """
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(User).filter(User.email == body.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
-    image_bytes = await photo.read()
+    # Decodificar base64 → bytes de imagen
+    try:
+        image_bytes = base64.b64decode(body.photo_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Imagen base64 inválida.")
 
     # Extraer encoding facial (128 características)
     encoding = encode_face_from_bytes(image_bytes)
@@ -243,7 +257,7 @@ async def register_face(
     user.is_registered = True  # Registro completo
     db.commit()
 
-    return {"message": "Registro completado exitosamente. Ya puedes iniciar sesión.", "email": email}
+    return {"message": "Registro completado exitosamente. Ya puedes iniciar sesión.", "email": body.email}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -351,22 +365,14 @@ def auth_totp(body: TOTPLoginRequest, db: Session = Depends(get_db)):
 # ═════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/auth/facial")
-async def auth_facial(
-    email: str = Form(...),
-    session_token: str = Form(...),
-    photo: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
+def auth_facial(body: FaceAuthRequest, db: Session = Depends(get_db)):
     """
     Factor 3 — AUTENTICACIÓN por reconocimiento facial.
 
-    Recibe la foto (multipart/form-data), la compara con el encoding guardado.
+    Recibe la foto como base64 en JSON, la compara con el encoding guardado.
     Si coincide, emite el JWT de acceso final (AUTORIZACIÓN).
-
-    La distancia euclidiana de la comparación se incluye en la respuesta
-    para transparencia en la demo del proyecto.
     """
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(User).filter(User.email == body.email).first()
     if not user or not user.is_registered:
         raise HTTPException(status_code=401, detail="Usuario no encontrado.")
 
@@ -379,14 +385,17 @@ async def auth_facial(
     now = datetime.now(timezone.utc)
     if (
         not user.mfa_session_token
-        or user.mfa_session_token != session_token
+        or user.mfa_session_token != body.session_token
         or not user.mfa_session_expires
         or user.mfa_session_expires.replace(tzinfo=timezone.utc) < now
     ):
         raise HTTPException(status_code=401, detail="Sesión MFA inválida o expirada. Reinicia el login.")
 
-    # Leer foto
-    image_bytes = await photo.read()
+    # Decodificar base64 → bytes de imagen
+    try:
+        image_bytes = base64.b64decode(body.photo_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Imagen base64 inválida.")
 
     # Descifrar encoding facial almacenado
     if not user.face_encoding_enc:
