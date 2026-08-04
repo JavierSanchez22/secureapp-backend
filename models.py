@@ -21,13 +21,18 @@ class User(Base):
     - totp_secret_enc   : secreto TOTP cifrado con AES-256-GCM
     - face_encoding_enc : codificación facial cifrada con AES-256-GCM
 
+    Campos de autorización:
+    - role              : rol del usuario ('admin' | 'user')
+                          El primer usuario registrado recibe rol 'admin',
+                          los siguientes reciben 'user'.
+
     Campos de bloqueo (rate-limiting):
     - failed_attempts   : contador de intentos fallidos consecutivos
     - locked_until      : timestamp hasta el que la cuenta está bloqueada
     - is_suspended      : True si la cuenta fue suspendida permanentemente
 
     Campos de estado MFA por sesión:
-    - mfa_step          : paso actual del flujo ('password', 'totp', 'facial', 'done')
+    - mfa_step          : paso actual del flujo
     - mfa_session_token : token temporal para validar que los pasos son consecutivos
     """
 
@@ -47,6 +52,10 @@ class User(Base):
 
     # ── Estado del registro ───────────────────────────────────────────────────
     is_registered: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # ── Autorización: rol del usuario ─────────────────────────────────────────
+    # 'admin' = primer usuario registrado / 'user' = resto
+    role: Mapped[str] = mapped_column(String(20), default="user", nullable=False)
 
     # ── Control de intentos fallidos (bloqueo) ────────────────────────────────
     failed_attempts: Mapped[int] = mapped_column(Integer, default=0)

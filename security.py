@@ -134,19 +134,21 @@ def decrypt_data(encrypted: bytes) -> bytes:
 # JWT — Autorización
 # ═════════════════════════════════════════════════════════════════════════════
 
-def create_access_token(user_id: int, email: str) -> str:
+def create_access_token(user_id: int, email: str, role: str = "user") -> str:
     """
     Crea un JWT de acceso firmado con HS256.
 
     El JWT contiene:
         - sub: ID del usuario
         - email: Email del usuario
+        - role: Rol de autorización ('admin' | 'user')
         - exp: Tiempo de expiración (24 horas desde ahora)
         - iat: Tiempo de emisión
 
     Args:
         user_id: ID del usuario en la base de datos.
         email: Email del usuario.
+        role: Rol del usuario ('admin' | 'user').
 
     Returns:
         str: Token JWT firmado.
@@ -155,6 +157,7 @@ def create_access_token(user_id: int, email: str) -> str:
     payload = {
         "sub": str(user_id),
         "email": email,
+        "role": role,
         "iat": now,
         "exp": now + timedelta(hours=JWT_EXPIRE_HOURS),
     }

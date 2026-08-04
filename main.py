@@ -96,6 +96,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 # SCHEMAS Pydantic (validación de entrada)
 # ═════════════════════════════════════════════════════════════════════════════
 
+import re
+
 class RegisterStartRequest(BaseModel):
     email: str
     password: str
@@ -172,6 +174,34 @@ def debug_facial():
     return {"all_ok": all_ok, "libraries": results}
 
 
+# ── Validación de fortaleza de contraseña ────────────────────────────────────
+def _validate_password(password: str) -> str | None:
+    """
+    Valida que la contraseña cumpla los requisitos de seguridad.
+
+    Reglas:
+      - Mínimo 8 caracteres
+      - Al menos 1 letra mayúscula (A-Z)
+      - Al menos 1 letra minúscula (a-z)
+      - Al menos 1 dígito (0-9)
+      - Al menos 1 carácter especial (!@#$%^&*...)
+
+    Returns:
+        str: mensaje de error, o None si la contraseña es válida.
+    """
+    if len(password) < 8:
+        return "La contraseña debe tener al menos 8 caracteres."
+    if not re.search(r'[A-Z]', password):
+        return "La contraseña debe contener al menos una letra mayúscula (A-Z)."
+    if not re.search(r'[a-z]', password):
+        return "La contraseña debe contener al menos una letra minúscula (a-z)."
+    if not re.search(r'[0-9]', password):
+        return "La contraseña debe contener al menos un número (0-9)."
+    if not re.search(r'[^A-Za-z0-9]', password):
+        return "La contraseña debe contener al menos un carácter especial (!@#$%^&*...)."
+    return None
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # REGISTRO — Paso 1: Email + Contraseña
 # ═════════════════════════════════════════════════════════════════════════════
@@ -180,16 +210,19 @@ def debug_facial():
 def register_start(body: RegisterStartRequest, db: Session = Depends(get_db)):
     """
     Inicia el proceso de registro.
-    Almacena email y hash Argon2id de la contraseña.
+    Valida fortaleza de contraseña, almacena email y hash Argon2id.
     Genera y guarda el secreto TOTP cifrado.
-
-    Returns:
-        email: para identificar al usuario en los siguientes pasos.
+    Asigna rol 'admin' al primer usuario, 'user' a los demás.
     """
     # Verificar si el email ya existe
     existing = db.query(User).filter(User.email == body.email).first()
     if existing and existing.is_registered:
         raise HTTPException(status_code=400, detail="El email ya está registrado.")
+
+    # — Validar fortaleza de contraseña (requisito de seguridad) —
+    pwd_error = _validate_password(body.password)
+    if pwd_error:
+        raise HTTPException(status_code=400, detail=pwd_error)
 
     # Hash Argon2id de la contraseña (NUNCA en texto plano)
     password_hash = hash_password(body.password)
@@ -198,20 +231,25 @@ def register_start(body: RegisterStartRequest, db: Session = Depends(get_db)):
     totp_secret = generate_totp_secret()
     totp_secret_enc = encrypt_data(totp_secret.encode())
 
+    # Determinar rol: primer usuario registrado = admin, resto = user
+    total_users = db.query(User).count()
+    role = "admin" if total_users == 0 else "user"
+
     if existing:
-        # Actualizar registro incompleto
+        # Actualizar registro incompleto (mantener rol si ya existía)
         existing.password_hash = password_hash
         existing.totp_secret_enc = totp_secret_enc
         existing.is_registered = False
         db.commit()
         user = existing
     else:
-        # Crear nuevo usuario
+        # Crear nuevo usuario con rol asignado
         user = User(
             email=body.email,
             password_hash=password_hash,
             totp_secret_enc=totp_secret_enc,
             is_registered=False,
+            role=role,
         )
         db.add(user)
         db.commit()
@@ -472,7 +510,7 @@ def auth_facial(body: FaceAuthRequest, db: Session = Depends(get_db)):
     user.last_login = datetime.utcnow()
     db.commit()
 
-    access_token = create_access_token(user_id=user.id, email=user.email)
+    access_token = create_access_token(user_id=user.id, email=user.email, role=user.role)
 
     return {
         "message": "Autenticación MFA completada. Acceso concedido.",
@@ -492,12 +530,10 @@ def get_dashboard(authorization: str = Header(None), db: Session = Depends(get_d
     """
     Recurso protegido — requiere JWT válido en el header Authorization.
 
-    Header: Authorization: Bearer <token>
-
     Demuestra la capa de AUTORIZACIÓN del sistema MFA:
     - Identifica quién eres (sub/email del JWT)
     - Verifica que el token es válido y no ha expirado
-    - Retorna datos personalizados del usuario
+    - Retorna el rol del usuario (admin/user)
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token de acceso requerido.")
@@ -514,10 +550,15 @@ def get_dashboard(authorization: str = Header(None), db: Session = Depends(get_d
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
+    # Etiqueta legible del rol para mostrar en la app
+    role_label = "Administrador" if user.role == "admin" else "Usuario"
+
     return {
-        "message": f"Bienvenido, {user.email}",
+        "message": f"Acceso autorizado — Rol: {role_label}",
         "user_id": user.id,
         "email": user.email,
+        "role": user.role,           # 'admin' | 'user'
+        "role_label": role_label,    # 'Administrador' | 'Usuario'
         "last_login": user.last_login.isoformat() if user.last_login else None,
         "mfa_factors": {
             "password": True,
