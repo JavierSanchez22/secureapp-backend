@@ -79,6 +79,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Manejador global de excepciones ─────────────────────────────────────────
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Captura cualquier excepción no manejada y devuelve JSON (nunca HTML)."""
+    tb = traceback.format_exc()
+    print(f"[ERROR] {request.url}\n{tb}")  # Se ve en los logs de Railway
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Error interno: {type(exc).__name__}: {str(exc)}"},
+    )
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SCHEMAS Pydantic (validación de entrada)
@@ -126,6 +137,41 @@ class FaceAuthRequest(BaseModel):
 def health_check():
     """Verifica que el servidor está corriendo."""
     return {"status": "ok", "message": "SecureApp MFA API funcionando"}
+
+
+@app.get("/api/debug/facial")
+def debug_facial():
+    """
+    Diagnóstico: prueba la importación de face_recognition y dlib.
+    Útil para detectar errores de instalación en Railway.
+    """
+    results = {}
+    try:
+        import numpy as np
+        results["numpy"] = np.__version__
+    except Exception as e:
+        results["numpy"] = f"ERROR: {e}"
+
+    try:
+        import dlib
+        results["dlib"] = str(dlib.DLIB_VERSION)
+    except Exception as e:
+        results["dlib"] = f"ERROR: {e}"
+
+    try:
+        import face_recognition
+        results["face_recognition"] = "ok"
+    except Exception as e:
+        results["face_recognition"] = f"ERROR: {e}"
+
+    try:
+        from PIL import Image
+        results["PIL"] = "ok"
+    except Exception as e:
+        results["PIL"] = f"ERROR: {e}"
+
+    all_ok = all("ERROR" not in str(v) for v in results.values())
+    return {"all_ok": all_ok, "libraries": results}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
