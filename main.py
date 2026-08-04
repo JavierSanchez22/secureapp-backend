@@ -31,11 +31,12 @@ SEGURIDAD EN TRÁNSITO
 
 import io
 import base64
+import traceback
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -84,7 +85,7 @@ app.add_middleware(
 async def global_exception_handler(request: Request, exc: Exception):
     """Captura cualquier excepción no manejada y devuelve JSON (nunca HTML)."""
     tb = traceback.format_exc()
-    print(f"[ERROR] {request.url}\n{tb}")  # Se ve en los logs de Railway
+    print(f"[ERROR] {request.url}\n{tb}")
     return JSONResponse(
         status_code=500,
         content={"detail": f"Error interno: {type(exc).__name__}: {str(exc)}"},
