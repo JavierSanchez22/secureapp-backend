@@ -25,8 +25,8 @@ import numpy as np
 
 # ── Umbral de distancia coseno ────────────────────────────────────────────────
 # 0.0 = idéntico, 1.0 = completamente diferente
-# < 0.25 = misma persona (para demo en condiciones similares de registro/login)
-FACE_TOLERANCE = 0.25
+# < 0.08 = misma persona (se redujo el umbral para evitar aceptar rostros incorrectos)
+FACE_TOLERANCE = 0.08
 
 # ── Singleton del detector Haar Cascade ──────────────────────────────────────
 _cascade = None
