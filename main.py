@@ -231,15 +231,18 @@ def register_start(body: RegisterStartRequest, db: Session = Depends(get_db)):
     totp_secret = generate_totp_secret()
     totp_secret_enc = encrypt_data(totp_secret.encode())
 
-    # Determinar rol: primer usuario registrado = admin, resto = user
-    total_users = db.query(User).count()
-    role = "admin" if total_users == 0 else "user"
+    # Determinar rol: si no hay ningún admin completamente registrado, este será admin.
+    admin_exists = db.query(User).filter(User.role == "admin", User.is_registered == True).first()
+    role = "admin" if not admin_exists else "user"
 
     if existing:
-        # Actualizar registro incompleto (mantener rol si ya existía)
+        # Actualizar registro incompleto
         existing.password_hash = password_hash
         existing.totp_secret_enc = totp_secret_enc
         existing.is_registered = False
+        # Si ya no hay un admin válido (o nunca lo hubo), promover este usuario a admin
+        if not admin_exists:
+            existing.role = "admin"
         db.commit()
         user = existing
     else:
@@ -566,3 +569,4 @@ def get_dashboard(authorization: str = Header(None), db: Session = Depends(get_d
             "facial": user.face_encoding_enc is not None,
         },
     }
+
