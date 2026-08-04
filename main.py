@@ -143,8 +143,7 @@ def health_check():
 @app.get("/api/debug/facial")
 def debug_facial():
     """
-    Diagnóstico: prueba la importación de face_recognition y dlib.
-    Útil para detectar errores de instalación en Railway.
+    Diagnóstico: prueba la importación de OpenCV y numpy.
     """
     results = {}
     try:
@@ -154,16 +153,14 @@ def debug_facial():
         results["numpy"] = f"ERROR: {e}"
 
     try:
-        import dlib
-        results["dlib"] = str(dlib.DLIB_VERSION)
+        import cv2
+        results["opencv"] = cv2.__version__
+        # Probar que el cascade XML está disponible
+        path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        cascade = cv2.CascadeClassifier(path)
+        results["haar_cascade"] = "ok" if not cascade.empty() else "ERROR: cascade vacio"
     except Exception as e:
-        results["dlib"] = f"ERROR: {e}"
-
-    try:
-        import face_recognition
-        results["face_recognition"] = "ok"
-    except Exception as e:
-        results["face_recognition"] = f"ERROR: {e}"
+        results["opencv"] = f"ERROR: {e}"
 
     try:
         from PIL import Image

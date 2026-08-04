@@ -19,7 +19,8 @@ qrcode[pil]==8.0
 # ── JWT (JSON Web Tokens) ─────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
 
-# ── Reconocimiento facial ──────────────────────────────────────────────────────
-face_recognition==1.3.0
+# ── Reconocimiento facial (OpenCV — wheels pre-compilados, sin dlib/cmake) ────
+# opencv-python-headless es la versión sin interfaz gráfica (para servidores)
+opencv-python-headless==4.10.0.84
 numpy==1.26.4
 Pillow==11.0.0

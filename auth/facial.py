@@ -1,64 +1,115 @@
 """
-auth/facial.py — Factor 3: Reconocimiento facial con face_recognition.
+auth/facial.py — Factor 3: Reconocimiento facial con OpenCV.
 
-Librería `face_recognition` (basada en dlib con deep learning):
-  - Modelo HOG + SVM para detección rápida de caras
-  - Red neuronal ResNet-34 para extraer 128 características faciales únicas
-  - Comparación por distancia euclidiana (umbral: 0.6 por defecto)
+Por qué OpenCV en lugar de face_recognition/dlib:
+  - face_recognition usa dlib (C++) que necesita compilarse → puede fallar en Railway
+  - opencv-python-headless tiene wheels pre-compilados → instala en segundos, sin cmake
+  - Usa ~10x menos RAM que dlib en servidor
+
+Técnica usada:
+  - Detección de cara: Haar Cascade (haarcascade_frontalface_default.xml)
+  - Encoding: parche 64×64 px + ecualización de histograma + normalización
+  - Comparación: distancia coseno (umbral: 0.25)
 
 Flujo:
-  1. Registro: captura foto → extrae encoding (128 números) → cifra → guarda en DB
-  2. Login: captura foto → extrae encoding → compara con el guardado → acepta/rechaza
+  1. Registro: foto → detecta cara → extrae vector 4096-dim → cifra AES → guarda en DB
+  2. Login: foto → extrae vector → compara coseno con el guardado → acepta/rechaza
 
 El encoding facial se almacena cifrado con AES-256-GCM en la base de datos.
 """
 
 import io
-from PIL import Image
-
-# ── Imports lazy de face_recognition y numpy ──────────────────────────────────
-# NO importamos al nivel de módulo porque face_recognition carga los modelos
-# de dlib al importar, lo que tarda 2-3 minutos y hace fallar el healthcheck
-# de Railway. En su lugar, importamos solo cuando se necesitan.
+import cv2
+import numpy as np
 
 
-# Umbral de similitud facial.
-# 0.55 = más estricto (menos falsos positivos), 0.65 = más tolerante.
-# 0.6 es el valor por defecto recomendado por la librería.
-FACE_TOLERANCE = 0.55
+# ── Umbral de distancia coseno ────────────────────────────────────────────────
+# 0.0 = idéntico, 1.0 = completamente diferente
+# < 0.25 = misma persona (para demo en condiciones similares de registro/login)
+FACE_TOLERANCE = 0.25
+
+# ── Singleton del detector Haar Cascade ──────────────────────────────────────
+_cascade = None
+
+
+def _get_cascade() -> cv2.CascadeClassifier:
+    """Carga el detector Haar Cascade una sola vez (lazy singleton)."""
+    global _cascade
+    if _cascade is None:
+        # haarcascade_frontalface_default.xml viene incluido en opencv-python-headless
+        path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        _cascade = cv2.CascadeClassifier(path)
+    return _cascade
+
+
+def _image_bytes_to_gray(image_bytes: bytes):
+    """
+    Convierte bytes de imagen (JPEG/PNG) a array numpy en escala de grises.
+
+    Returns:
+        numpy.ndarray | None: Imagen en grises, o None si falla la decodificación.
+    """
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img_color = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img_color is None:
+        return None
+    return cv2.cvtColor(img_color, cv2.COLOR_BGR2GRAY)
 
 
 def encode_face_from_bytes(image_bytes: bytes) -> list[float] | None:
     """
-    Extrae el encoding facial (128 características) de una imagen.
+    Detecta la cara en la imagen y extrae un vector de características facial.
 
-    El encoding es un vector de 128 números float64 que representa
-    de forma única las características del rostro detectado.
+    Proceso:
+      1. Decodificar imagen → escala de grises
+      2. Haar Cascade detecta caras
+      3. ROI de la cara más grande → resize 64×64
+      4. Ecualización de histograma (invariante a iluminación)
+      5. Desenfoque gaussiano (reduce ruido)
+      6. Normalizar [0,1] y aplanar → vector 4096 floats
 
     Args:
         image_bytes: Imagen en bytes (JPEG, PNG, etc.)
 
     Returns:
-        list[float] | None: Lista de 128 floats si se detectó una cara,
-                            None si no se encontró ninguna cara en la imagen.
+        list[float] | None: Vector de 4096 floats si detectó cara, None si no.
     """
-    # Importar aquí (lazy) para no bloquear el arranque del servidor
-    import numpy as np  # noqa: PLC0415
-    import face_recognition  # noqa: PLC0415
+    gray = _image_bytes_to_gray(image_bytes)
+    if gray is None:
+        return None
 
-    # Convertir bytes a array numpy RGB (face_recognition lo necesita en RGB)
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    img_array = np.array(img)
+    cascade = _get_cascade()
+    faces = cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=4,
+        minSize=(50, 50),
+    )
 
-    # Detectar caras y extraer encodings
-    # num_jitters=2 → re-muestrea 2 veces para mayor precisión
-    encodings = face_recognition.face_encodings(img_array, num_jitters=2)
+    if len(faces) == 0:
+        # Intentar con parámetros más permisivos (caras pequeñas o mala iluminación)
+        faces = cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.05,
+            minNeighbors=2,
+            minSize=(30, 30),
+        )
 
-    if not encodings:
-        return None  # No se detectó ninguna cara
+    if len(faces) == 0:
+        return None
 
-    # Retornar el encoding de la primera cara detectada
-    return encodings[0].tolist()
+    # Seleccionar la cara más grande detectada
+    x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+    face_roi = gray[y : y + h, x : x + w]
+
+    # Normalización del parche
+    face_resized = cv2.resize(face_roi, (64, 64))
+    face_equalized = cv2.equalizeHist(face_resized)   # Invariante a iluminación
+    face_blurred = cv2.GaussianBlur(face_equalized, (3, 3), 0)  # Reduce ruido
+
+    # Vector normalizado en [0, 1]
+    features = face_blurred.astype(np.float32) / 255.0
+    return features.flatten().tolist()
 
 
 def verify_face(
@@ -66,42 +117,42 @@ def verify_face(
     new_image_bytes: bytes,
 ) -> tuple[bool, float]:
     """
-    Compara un nuevo rostro contra el encoding guardado en la base de datos.
+    Compara un nuevo rostro contra el encoding guardado usando distancia coseno.
+
+    Distancia coseno = 1 - (A·B / |A||B|)
+      0.0 = idéntico
+      1.0 = completamente diferente
+      < 0.25 = misma persona (umbral para demo)
 
     Args:
-        stored_encoding: Encoding facial almacenado (lista de 128 floats).
+        stored_encoding: Vector facial almacenado (4096 floats).
         new_image_bytes: Nueva foto del usuario en bytes.
 
     Returns:
         tuple[bool, float]:
-            - bool: True si el rostro coincide con el almacenado.
-            - float: Distancia euclidiana (0.0 = idéntico, 1.0 = muy diferente).
-                     Valores < FACE_TOLERANCE (0.55) son considerados coincidencias.
+            - bool: True si el rostro coincide.
+            - float: Distancia coseno resultante.
     """
-    # Importar aquí (lazy)
-    import numpy as np  # noqa: PLC0415
-    import face_recognition  # noqa: PLC0415
-
     new_encoding = encode_face_from_bytes(new_image_bytes)
 
     if new_encoding is None:
-        # No se detectó cara en la nueva imagen
         return False, 1.0
 
-    known = np.array([stored_encoding])
-    unknown = np.array(new_encoding)
+    known = np.array(stored_encoding, dtype=np.float32)
+    unknown = np.array(new_encoding, dtype=np.float32)
 
-    # face_distance devuelve la distancia euclidiana
-    distances = face_recognition.face_distance(known, unknown)
-    distance = float(distances[0])
+    # Distancia coseno
+    dot = np.dot(known, unknown)
+    norm_k = np.linalg.norm(known)
+    norm_u = np.linalg.norm(unknown)
 
-    # Comparar contra el umbral
-    match = bool(face_recognition.compare_faces(
-        [np.array(stored_encoding)],
-        unknown,
-        tolerance=FACE_TOLERANCE,
-    )[0])
+    if norm_k == 0 or norm_u == 0:
+        return False, 1.0
 
+    cosine_similarity = dot / (norm_k * norm_u)
+    distance = float(1.0 - cosine_similarity)
+
+    match = distance < FACE_TOLERANCE
     return match, distance
 
 
@@ -109,17 +160,10 @@ def encoding_to_bytes(encoding: list[float]) -> bytes:
     """
     Serializa el encoding facial (lista de floats) a bytes para almacenar.
 
-    Usa numpy's binary format (.npy) para preservar la precisión float64.
-
-    Args:
-        encoding: Lista de 128 floats.
-
-    Returns:
-        bytes: Encoding serializado en formato numpy binario.
+    Usa numpy's binary format (.npy) para preservar precisión float32.
     """
-    import numpy as np  # noqa: PLC0415
     buf = io.BytesIO()
-    np.save(buf, np.array(encoding, dtype=np.float64))
+    np.save(buf, np.array(encoding, dtype=np.float32))
     buf.seek(0)
     return buf.read()
 
@@ -127,14 +171,7 @@ def encoding_to_bytes(encoding: list[float]) -> bytes:
 def bytes_to_encoding(data: bytes) -> list[float]:
     """
     Deserializa bytes a encoding facial (lista de floats).
-
-    Args:
-        data: Bytes en formato numpy binario.
-
-    Returns:
-        list[float]: Lista de 128 floats del encoding facial.
     """
-    import numpy as np  # noqa: PLC0415
     buf = io.BytesIO(data)
     arr = np.load(buf)
     return arr.tolist()
